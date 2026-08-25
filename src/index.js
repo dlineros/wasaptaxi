@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { config } from './config/env.js';
 import { getDb, closeDb } from './db/connection.js';
+import { initDb } from './db/init.js';
 import { initWhatsApp } from './bot/whatsapp.js';
 import { handleMessage } from './bot/handlers.js';
 
@@ -11,13 +12,15 @@ import { handleMessage } from './bot/handlers.js';
 async function main() {
   console.log('🚕 WasapTaxi — Iniciando...\n');
 
-  // 1. Conectar a la base de datos
+  // 1. Conectar a la base de datos e inicializar tablas
   console.log('📦 Conectando a PostgreSQL...');
   try {
-    const db = getDb();
-    console.log('✅ PostgreSQL conectado.\n');
+    getDb();
+    console.log('✅ PostgreSQL conectado.');
+    await initDb();
+    console.log('✅ Base de datos lista.\n');
   } catch (error) {
-    console.error('❌ Error conectando a PostgreSQL:', error.message);
+    console.error('❌ Error conectando/inicializando PostgreSQL:', error.message);
     process.exit(1);
   }
 
