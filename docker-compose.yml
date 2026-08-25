@@ -1,0 +1,41 @@
+services:
+  wasaptaxi:
+    build: .
+    container_name: wasaptaxi
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://wasaptaxi:wasaptaxi_pass@db:5432/wasaptaxi
+      - BOT_PHONE_NUMBER=+56930268900
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - NODE_ENV=production
+    volumes:
+      - wa_session:/app/auth_info
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: wasaptaxi-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wasaptaxi
+      POSTGRES_PASSWORD: wasaptaxi_pass
+      POSTGRES_DB: wasaptaxi
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wasaptaxi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  wa_session:
+    name: wasaptaxi_wa_session
+  pg_data:
+    name: wasaptaxi_pg_data
