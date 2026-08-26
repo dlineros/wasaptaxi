@@ -5,6 +5,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
+import qrcode from 'qrcode-terminal';
 import { config } from '../config/env.js';
 
 const logger = pino({ level: 'silent' }); // Silenciar logs internos de Baileys
@@ -28,7 +29,6 @@ export async function initWhatsApp(onMessage) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    printQRInTerminal: true,
     logger,
     defaultQueryTimeoutMs: undefined,
   });
@@ -43,6 +43,7 @@ export async function initWhatsApp(onMessage) {
     if (qr) {
       console.log('\n📱 Escanea este QR con tu WhatsApp:');
       console.log('   (WhatsApp → Dispositivos vinculados → Vincular dispositivo)\n');
+      qrcode.generate(qr, { small: true });
     }
 
     if (connection === 'close') {
