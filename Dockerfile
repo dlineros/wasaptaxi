@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
-# Dependencias nativas para Baileys
-RUN apk add --no-cache python3 make g++
+# Dependencias del sistema, compilación y utilidades para healthcheck
+RUN apk add --no-cache python3 make g++ curl wget
 
 WORKDIR /app
 
@@ -13,14 +13,14 @@ RUN npm ci --production && npm cache clean --force
 COPY src/ ./src/
 COPY drizzle.config.js ./
 
-# Puerto para health checks
+# Puerto para health checks y panel QR
 EXPOSE 3000
 
 # Directorio para la sesión de WhatsApp (montar como volumen)
 VOLUME ["/app/auth_info"]
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://127.0.0.1:3000/health || exit 1
 
 CMD ["node", "src/index.js"]
