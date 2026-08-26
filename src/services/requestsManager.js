@@ -104,6 +104,81 @@ export async function acceptServiceRequest(requestId, providerId) {
 }
 
 /**
+ * Obtiene una solicitud por su ID con todos sus detalles.
+ */
+export async function getRequestById(id) {
+  const pool = getPool();
+  const query = `
+    SELECT sr.*,
+           s.name as service_name, s.emoji as service_emoji, s.slug as service_slug,
+           c.name as customer_name, c.phone as customer_phone,
+           p.name as provider_name, p.business_name as provider_business, p.phone as provider_phone
+    FROM service_requests sr
+    JOIN services s ON s.id = sr.service_id
+    JOIN customers c ON c.id = sr.customer_id
+    LEFT JOIN providers p ON p.id = sr.provider_id
+    WHERE sr.id = $1;
+  `;
+  const result = await pool.query(query, [id]);
+  return result.rows[0] || null;
+}
+
+/**
+ * Actualiza los campos de una solicitud (detalle, dirección, oferente asignado, estado).
+ */
+export async function updateServiceRequest(id, { requestDetail, locationAddress, locationLatitude, locationLongitude, providerId, status }) {
+  const pool = getPool();
+
+  const updates = [];
+  const params = [];
+  let pIndex = 1;
+
+  if (requestDetail !== undefined) {
+    updates.push(`request_detail = $${pIndex++}`);
+    params.push(requestDetail);
+  }
+  if (locationAddress !== undefined) {
+    updates.push(`location_address = $${pIndex++}`);
+    params.push(locationAddress);
+  }
+  if (locationLatitude !== undefined) {
+    updates.push(`location_latitude = $${pIndex++}`);
+    params.push(locationLatitude ? locationLatitude.toString() : null);
+  }
+  if (locationLongitude !== undefined) {
+    updates.push(`location_longitude = $${pIndex++}`);
+    params.push(locationLongitude ? locationLongitude.toString() : null);
+  }
+  if (providerId !== undefined) {
+    updates.push(`provider_id = $${pIndex++}`);
+    params.push(providerId ? parseInt(providerId, 10) : null);
+    if (providerId) {
+      updates.push(`assigned_at = NOW()`);
+    }
+  }
+  if (status !== undefined) {
+    updates.push(`status = $${pIndex++}`);
+    params.push(status);
+    if (status === 'completed' || status === 'cancelled') {
+      updates.push(`completed_at = NOW()`);
+    }
+  }
+
+  updates.push(`version = version + 1`);
+  params.push(id);
+
+  const query = `
+    UPDATE service_requests
+    SET ${updates.join(', ')}
+    WHERE id = $${pIndex}
+    RETURNING *;
+  `;
+
+  const result = await pool.query(query, params);
+  return result.rows[0];
+}
+
+/**
  * Registra el envío de una notificación a un oferente.
  */
 export async function logNotification(requestId, providerId) {

@@ -9,7 +9,7 @@ export const services = pgTable('services', {
   name: varchar('name', { length: 100 }).notNull(), // 'Pedir Taxi', 'Solicitar Pellet'
   emoji: varchar('emoji', { length: 10 }).default('📦').notNull(), // '🚕', '🪵', '🥩', '❄️'
   description: text('description'),
-  promptDetail: text('prompt_detail').notNull(), // Pregunta para el cliente: ej. "¿Qué cantidad de pellet necesitas y a qué dirección?"
+  promptDetail: text('prompt_detail').notNull(), // Pregunta para el cliente
   requiresLocation: boolean('requires_location').default(true).notNull(),
   isActive: boolean('is_active').default(true).notNull(),
   displayOrder: integer('display_order').default(1).notNull(),
@@ -22,9 +22,9 @@ export const services = pgTable('services', {
 export const providers = pgTable('providers', {
   id: serial('id').primaryKey(),
   serviceId: integer('service_id').references(() => services.id).notNull(),
-  phone: varchar('phone', { length: 20 }).unique().notNull(), // WhatsApp del oferente ej: +56912345678
-  name: varchar('name', { length: 100 }).notNull(), // Nombre persona
-  businessName: varchar('business_name', { length: 100 }), // Nombre local o negocio
+  phone: varchar('phone', { length: 20 }).unique().notNull(), // WhatsApp del oferente
+  name: varchar('name', { length: 100 }).notNull(),
+  businessName: varchar('business_name', { length: 100 }),
   extraInfo: text('extra_info'), // Patente, auto, capacidad, etc.
   isActive: boolean('is_active').default(true).notNull(),
   latitude: decimal('latitude', { precision: 10, scale: 7 }),
@@ -40,7 +40,7 @@ export const customers = pgTable('customers', {
   id: serial('id').primaryKey(),
   phone: varchar('phone', { length: 20 }).unique().notNull(),
   name: varchar('name', { length: 100 }),
-  currentStep: varchar('current_step', { length: 50 }).default('IDLE').notNull(), // IDLE, WAITING_DETAIL, WAITING_LOCATION, ACTIVE_REQUEST
+  currentStep: varchar('current_step', { length: 50 }).default('IDLE').notNull(),
   selectedServiceId: integer('selected_service_id').references(() => services.id),
   tempDetail: text('temp_detail'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -53,10 +53,10 @@ export const serviceRequests = pgTable('service_requests', {
   id: serial('id').primaryKey(),
   serviceId: integer('service_id').references(() => services.id).notNull(),
   customerId: integer('customer_id').references(() => customers.id).notNull(),
-  providerId: integer('provider_id').references(() => providers.id), // Oferente que ganó el pedido
+  providerId: integer('provider_id').references(() => providers.id), // Oferente asignado (reasignable)
   status: varchar('status', { length: 20 }).default('pending').notNull(), // pending, assigned, completed, cancelled
-  requestDetail: text('request_detail'), // Lo que pidió el cliente
-  // Ubicación del servicio
+  requestDetail: text('request_detail'), // Lo que pidió el cliente (editable)
+  // Ubicación del servicio (editable)
   locationLatitude: decimal('location_latitude', { precision: 10, scale: 7 }),
   locationLongitude: decimal('location_longitude', { precision: 10, scale: 7 }),
   locationAddress: text('location_address'),
@@ -69,7 +69,22 @@ export const serviceRequests = pgTable('service_requests', {
 });
 
 // ============================================================
-// 5. Notificaciones de Despacho a Oferentes (Auditoría)
+// 5. Historial de Mensajes de Conversación (Live Chat)
+// ============================================================
+export const chatMessages = pgTable('chat_messages', {
+  id: serial('id').primaryKey(),
+  customerId: integer('customer_id').references(() => customers.id).notNull(),
+  requestId: integer('request_id').references(() => serviceRequests.id),
+  sender: varchar('sender', { length: 20 }).notNull(), // 'customer', 'bot', 'admin'
+  messageType: varchar('message_type', { length: 20 }).default('text').notNull(), // 'text', 'location'
+  content: text('content'),
+  latitude: decimal('latitude', { precision: 10, scale: 7 }),
+  longitude: decimal('longitude', { precision: 10, scale: 7 }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// ============================================================
+// 6. Notificaciones de Despacho a Oferentes (Auditoría)
 // ============================================================
 export const requestNotifications = pgTable('request_notifications', {
   id: serial('id').primaryKey(),
@@ -77,10 +92,10 @@ export const requestNotifications = pgTable('request_notifications', {
   providerId: integer('provider_id').references(() => providers.id).notNull(),
   sentAt: timestamp('sent_at').defaultNow().notNull(),
   respondedAt: timestamp('responded_at'),
-  response: varchar('response', { length: 20 }), // 'accepted', 'rejected', 'timeout', null
+  response: varchar('response', { length: 20 }),
 });
 
-// Retrocompatibilidad con nombres anteriores si alguna consulta legacy lo requiere
+// Retrocompatibilidad
 export const drivers = providers;
 export const passengers = customers;
 export const rides = serviceRequests;

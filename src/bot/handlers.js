@@ -16,6 +16,7 @@ import {
   getLatestPendingOfferForProvider,
   logNotification,
 } from '../services/requestsManager.js';
+import { saveChatMessage } from '../services/chatManager.js';
 import { geocodeAddress, reverseGeocode } from '../services/geocoding.js';
 import { sendMessage, sendLocation } from './whatsapp.js';
 import * as msg from './messages.js';
@@ -106,12 +107,16 @@ export async function handleMessage(msgObj) {
           );
         }
 
-        // Notificar al cliente
+        // Notificar al cliente y registrar en el chat
         const customerJid = `${req.customerPhone.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-        await sendMessage(
-          customerJid,
-          msg.clientAssignedMessage(service, req.id, provider)
-        );
+        const clientText = msg.clientAssignedMessage(service, req.id, provider);
+        await sendMessage(customerJid, clientText);
+        await saveChatMessage({
+          customerId: req.customer_id,
+          requestId: req.id,
+          sender: 'bot',
+          content: clientText,
+        });
 
         // Actualizar paso del cliente a IDLE
         await updateCustomerStep(req.customerPhone, 'IDLE');
@@ -128,16 +133,40 @@ export async function handleMessage(msgObj) {
   // 2. Flujo de Clientes (Solicitudes de Servicios)
   // ============================================================
   const customer = await findOrCreateCustomer(phone, pushName);
+  const activeReq = await getActiveRequestForCustomer(customer.id);
+  const currentRequestId = activeReq ? activeReq.id : null;
+
+  // Registrar mensaje entrante del cliente en el historial de chat
+  await saveChatMessage({
+    customerId: customer.id,
+    requestId: currentRequestId,
+    sender: 'customer',
+    messageType: locationMsg ? 'location' : 'text',
+    content: locationMsg ? '📍 Ubicación GPS compartida' : text,
+    latitude: locationMsg ? locationMsg.degreesLatitude : null,
+    longitude: locationMsg ? locationMsg.degreesLongitude : null,
+  });
+
   const activeServices = await getActiveServices();
+
+  // Helper para responder al cliente y guardar el mensaje del bot
+  const replyToCustomer = async (replyText) => {
+    await sendMessage(jid, replyText);
+    await saveChatMessage({
+      customerId: customer.id,
+      requestId: currentRequestId,
+      sender: 'bot',
+      content: replyText,
+    });
+  };
 
   // Comando global: CANCELAR
   if (lowerText === 'cancelar' || lowerText === 'salir') {
-    const activeReq = await getActiveRequestForCustomer(customer.id);
     if (activeReq && activeReq.status === 'pending') {
       await cancelServiceRequest(activeReq.id);
-      await sendMessage(jid, msg.requestCancelledMessage(activeReq.id));
+      await replyToCustomer(msg.requestCancelledMessage(activeReq.id));
     } else {
-      await sendMessage(jid, 'ℹ️ Operación cancelada. Escribe *hola* para ver el menú.');
+      await replyToCustomer('ℹ️ Operación cancelada. Escribe *hola* para ver el menú.');
     }
     await updateCustomerStep(phone, 'IDLE', null, null);
     return;
@@ -146,7 +175,7 @@ export async function handleMessage(msgObj) {
   // Comando global: HOLA o MENÚ
   if (lowerText === 'hola' || lowerText === 'menu' || lowerText === 'menú' || lowerText === 'inicio' || customer.currentStep === 'IDLE') {
     await updateCustomerStep(phone, 'MENU', null, null);
-    await sendMessage(jid, msg.menuMessage(customer.name || pushName, activeServices));
+    await replyToCustomer(msg.menuMessage(customer.name || pushName, activeServices));
     return;
   }
 
@@ -161,10 +190,10 @@ export async function handleMessage(msgObj) {
 
       // Avanzar al paso de detalle
       await updateCustomerStep(phone, 'WAITING_DETAIL', chosenService.id, null);
-      await sendMessage(jid, msg.promptDetailMessage(chosenService));
+      await replyToCustomer(msg.promptDetailMessage(chosenService));
       return;
     } else {
-      await sendMessage(jid, `⚠️ Opción no válida. Por favor responde con un número del 1 al ${activeServices.length}.\n\n` + msg.menuMessage(customer.name, activeServices));
+      await replyToCustomer(`⚠️ Opción no válida. Por favor responde con un número del 1 al ${activeServices.length}.\n\n` + msg.menuMessage(customer.name, activeServices));
       return;
     }
   }
@@ -176,12 +205,12 @@ export async function handleMessage(msgObj) {
     const service = await getServiceById(customer.selectedServiceId);
     if (!service) {
       await updateCustomerStep(phone, 'IDLE');
-      await sendMessage(jid, '⚠️ El servicio ya no está disponible. Escribe *hola* para reiniciar.');
+      await replyToCustomer('⚠️ El servicio ya no está disponible. Escribe *hola* para reiniciar.');
       return;
     }
 
     if (!text || text.length < 2) {
-      await sendMessage(jid, '⚠️ Por favor ingresa una descripción o detalle válido para tu solicitud.');
+      await replyToCustomer('⚠️ Por favor ingresa una descripción o detalle válido para tu solicitud.');
       return;
     }
 
@@ -190,7 +219,7 @@ export async function handleMessage(msgObj) {
     if (service.requiresLocation) {
       // Guardar detalle y pedir ubicación
       await updateCustomerStep(phone, 'WAITING_LOCATION', service.id, detailText);
-      await sendMessage(jid, msg.promptLocationMessage(service));
+      await replyToCustomer(msg.promptLocationMessage(service));
       return;
     } else {
       // Si el servicio no requiere ubicación GPS, crear la solicitud de inmediato
@@ -206,7 +235,7 @@ export async function handleMessage(msgObj) {
     const service = await getServiceById(customer.selectedServiceId);
     if (!service) {
       await updateCustomerStep(phone, 'IDLE');
-      await sendMessage(jid, '⚠️ Error en la sesión. Escribe *hola* para reiniciar.');
+      await replyToCustomer('⚠️ Error en la sesión. Escribe *hola* para reiniciar.');
       return;
     }
 
@@ -228,7 +257,7 @@ export async function handleMessage(msgObj) {
         address = geo.formattedAddress;
       }
     } else {
-      await sendMessage(jid, '⚠️ Por favor comparte tu ubicación actual o escribe tu dirección.');
+      await replyToCustomer('⚠️ Por favor comparte tu ubicación actual o escribe tu dirección.');
       return;
     }
 
@@ -237,7 +266,7 @@ export async function handleMessage(msgObj) {
   }
 
   // Respuesta por defecto
-  await sendMessage(jid, msg.helpMessage());
+  await replyToCustomer(msg.helpMessage());
 }
 
 /**
@@ -257,11 +286,15 @@ async function finalizeAndDispatchService(jid, customer, service, detailText, la
   // 2. Actualizar estado del cliente
   await updateCustomerStep(customer.phone, 'ACTIVE_REQUEST', service.id, null);
 
-  // 3. Confirmar al cliente
-  await sendMessage(
-    jid,
-    msg.requestCreatedClientMessage(service, newRequest.id, detailText, address)
-  );
+  // 3. Confirmar al cliente y guardar mensaje en chat
+  const confirmText = msg.requestCreatedClientMessage(service, newRequest.id, detailText, address);
+  await sendMessage(jid, confirmText);
+  await saveChatMessage({
+    customerId: customer.id,
+    requestId: newRequest.id,
+    sender: 'bot',
+    content: confirmText,
+  });
 
   // 4. Buscar oferentes activos de este servicio
   const nearbyProviders = await findNearbyProviders(service.id, lat, lng);

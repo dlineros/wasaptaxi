@@ -14,8 +14,8 @@ const optional = (key, defaultValue) => {
 
 const getDatabaseUrl = () => {
   const envUrl = process.env.DATABASE_URL;
-  // Si la variable en Coolify sigue usando el usuario 'postgres' (que falla auth), usar las credenciales verificadas
-  if (!envUrl || envUrl.includes('//postgres:') || envUrl.includes('/postgres')) {
+  // Si la variable en Coolify sigue usando el usuario 'postgres' (que falla auth) o base 'postgres', usar las credenciales verificadas
+  if (!envUrl || envUrl.includes('://postgres:') || envUrl.endsWith('/postgres')) {
     return 'postgres://wasaptaxi:wasaptaxi2026@fdypyggndssrlgmpokixghv9:5432/wasaptaxi';
   }
   return envUrl;

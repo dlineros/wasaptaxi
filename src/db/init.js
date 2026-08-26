@@ -67,7 +67,20 @@ export async function initDb() {
       version INTEGER DEFAULT 1 NOT NULL
     );
 
-    -- 5. Notificaciones de Despacho (Auditoría)
+    -- 5. Historial de Mensajes (Live Chat)
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE NOT NULL,
+      request_id INTEGER REFERENCES service_requests(id) ON DELETE SET NULL,
+      sender VARCHAR(20) NOT NULL,
+      message_type VARCHAR(20) DEFAULT 'text' NOT NULL,
+      content TEXT,
+      latitude DECIMAL(10, 7),
+      longitude DECIMAL(10, 7),
+      created_at TIMESTAMP DEFAULT NOW() NOT NULL
+    );
+
+    -- 6. Notificaciones de Despacho (Auditoría)
     CREATE TABLE IF NOT EXISTS request_notifications (
       id SERIAL PRIMARY KEY,
       request_id INTEGER REFERENCES service_requests(id) ON DELETE CASCADE NOT NULL,
@@ -81,6 +94,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_service_requests_status ON service_requests(status) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS idx_providers_service ON providers(service_id, is_active);
     CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_customer ON chat_messages(customer_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_request ON chat_messages(request_id, created_at);
   `);
 
   // 2. Sembrar servicios iniciales si no existen
@@ -97,28 +112,6 @@ export async function initDb() {
       ON CONFLICT (slug) DO NOTHING;
     `);
     console.log('✅ 4 servicios iniciales creados.');
-  }
-
-  // 3. Migrar taxistas legacy si existen en la tabla antigua drivers
-  try {
-    const legacyDrivers = await pool.query(`
-      SELECT 1 FROM information_schema.tables WHERE table_name = 'drivers'
-    `);
-    if (legacyDrivers.rows.length > 0) {
-      // Asociar taxistas antiguos al servicio taxi
-      const taxiService = await pool.query("SELECT id FROM services WHERE slug = 'taxi' LIMIT 1");
-      if (taxiService.rows.length > 0) {
-        const taxiId = taxiService.rows[0].id;
-        await pool.query(`
-          INSERT INTO providers (service_id, phone, name, business_name, extra_info, is_active, latitude, longitude, created_at)
-          SELECT ${taxiId}, phone, name, 'Taxi ' || name, car_model || ' (' || car_plate || ')', is_active, latitude, longitude, created_at
-          FROM drivers
-          ON CONFLICT (phone) DO NOTHING;
-        `);
-      }
-    }
-  } catch (e) {
-    // Ignorar si no existe tabla legacy
   }
 
   console.log('✅ Base de datos multi-servicio inicializada correctamente.');

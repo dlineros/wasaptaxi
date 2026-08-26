@@ -1,5 +1,5 @@
 /**
- * Renderiza la interfaz gráfica del Panel Administrador Web de WasapTaxi.
+ * Renderiza la interfaz gráfica del Panel Administrador Web de WasapTaxi con Live Chat y Edición de Solicitudes.
  */
 export function renderAdminHtml() {
   return `<!DOCTYPE html>
@@ -9,7 +9,7 @@ export function renderAdminHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WasapTaxi — Panel de Administración Multi-Servicio</title>
   
-  <!-- Tailwind CSS CDN para estilos rápidos y modernos -->
+  <!-- Tailwind CSS CDN para estilos modernos -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Leaflet CSS & JS para mapas interactivos -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -21,6 +21,7 @@ export function renderAdminHtml() {
     .glass-card { background: #1e293b; border: 1px solid #334155; }
     #map { height: 420px; border-radius: 12px; z-index: 10; }
     .tab-active { border-bottom: 2px solid #38bdf8; color: #38bdf8; font-weight: 600; }
+    .chat-scroll { max-height: 400px; min-height: 280px; overflow-y: auto; }
   </style>
 </head>
 <body class="min-h-screen flex flex-col font-sans antialiased">
@@ -79,7 +80,6 @@ export function renderAdminHtml() {
     <!-- TAB 1: DASHBOARD & MAPA -->
     <!-- ============================================================ -->
     <div id="tab-dashboard" class="space-y-6">
-      <!-- Widgets de Métricas -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="glass-card p-5 rounded-xl">
           <p class="text-xs text-slate-400 uppercase font-semibold">Servicios Activos</p>
@@ -99,7 +99,6 @@ export function renderAdminHtml() {
         </div>
       </div>
 
-      <!-- Mapa en Vivo -->
       <div class="glass-card p-6 rounded-2xl">
         <div class="flex items-center justify-between mb-4">
           <div>
@@ -113,7 +112,7 @@ export function renderAdminHtml() {
     </div>
 
     <!-- ============================================================ -->
-    <!-- TAB 2: SERVICIOS (CATEGORÍAS) -->
+    <!-- TAB 2: SERVICIOS -->
     <!-- ============================================================ -->
     <div id="tab-services" class="hidden space-y-6">
       <div class="flex items-center justify-between">
@@ -145,7 +144,7 @@ export function renderAdminHtml() {
     </div>
 
     <!-- ============================================================ -->
-    <!-- TAB 3: OFERENTES / FLOTA -->
+    <!-- TAB 3: OFERENTES -->
     <!-- ============================================================ -->
     <div id="tab-providers" class="hidden space-y-6">
       <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -188,7 +187,7 @@ export function renderAdminHtml() {
       <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <h2 class="text-xl font-bold text-white">📦 Solicitudes de Servicio en Vivo</h2>
-          <p class="text-sm text-slate-400">Control de pedidos, asignaciones y carreras en tiempo real</p>
+          <p class="text-sm text-slate-400">Control de pedidos, chat en vivo con clientes y edición de solicitudes</p>
         </div>
         <div class="flex gap-3">
           <select id="filter-request-status" onchange="loadRequests()" class="px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-300">
@@ -214,7 +213,7 @@ export function renderAdminHtml() {
               <th class="p-4">Oferente Asignado</th>
               <th class="p-4">Estado</th>
               <th class="p-4">Fecha/Hora</th>
-              <th class="p-4 text-right">Acciones</th>
+              <th class="p-4 text-right">Acciones & Chat</th>
             </tr>
           </thead>
           <tbody id="requests-table-body" class="divide-y divide-slate-800">
@@ -243,10 +242,11 @@ export function renderAdminHtml() {
               <th class="p-4">Paso Actual</th>
               <th class="p-4">Último Servicio Solicitado</th>
               <th class="p-4">Registrado</th>
+              <th class="p-4 text-right">Chat</th>
             </tr>
           </thead>
           <tbody id="customers-table-body" class="divide-y divide-slate-800">
-            <tr><td colspan="6" class="p-6 text-center text-slate-500">Cargando clientes...</td></tr>
+            <tr><td colspan="7" class="p-6 text-center text-slate-500">Cargando clientes...</td></tr>
           </tbody>
         </table>
       </div>
@@ -281,6 +281,90 @@ export function renderAdminHtml() {
     </div>
 
   </main>
+
+  <!-- ============================================================ -->
+  <!-- MODAL: LIVE CHAT CON CLIENTE (CONVERSACIÓN EN VIVO) -->
+  <!-- ============================================================ -->
+  <div id="chat-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 hidden">
+    <div class="glass-card rounded-2xl max-w-xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-700">
+      
+      <!-- Cabecera del Chat -->
+      <div class="p-4 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span id="chat-service-emoji" class="text-2xl">💬</span>
+          <div>
+            <h3 id="chat-customer-title" class="font-bold text-white leading-tight">Conversación con Cliente</h3>
+            <p id="chat-customer-sub" class="text-xs text-emerald-400 font-mono">+569... (Solicitud #...)</p>
+          </div>
+        </div>
+        <button onclick="closeChatModal()" class="text-slate-400 hover:text-white text-xl p-1">&times;</button>
+      </div>
+
+      <!-- Cuerpo de Mensajes -->
+      <div id="chat-messages-container" class="p-4 space-y-3 chat-scroll bg-slate-950/60 flex-1">
+        <div class="text-center text-xs text-slate-500 py-8">Cargando mensajes...</div>
+      </div>
+
+      <!-- Barra de Envío Manual de Mensaje -->
+      <form id="chat-send-form" onsubmit="sendManualMessage(event)" class="p-3 bg-slate-900 border-t border-slate-800 flex gap-2">
+        <input type="hidden" id="chat-customer-id" />
+        <input type="hidden" id="chat-request-id" />
+        <input type="hidden" id="chat-customer-phone" />
+        <input type="text" id="chat-input-text" placeholder="Escribe un mensaje de WhatsApp para el cliente..." required autocomplete="off" class="flex-1 px-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-sky-500 placeholder-slate-500" />
+        <button type="submit" id="chat-send-btn" class="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-sm rounded-lg transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20">
+          <span>Enviar</span> 🚀
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- MODAL: EDITAR SOLICITUD / PEDIDO -->
+  <!-- ============================================================ -->
+  <div id="edit-request-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 hidden">
+    <div class="glass-card rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-700">
+      <div class="flex items-center justify-between mb-4">
+        <h3 id="edit-request-title" class="text-xl font-bold text-white">✏️ Editar Solicitud #</h3>
+        <button onclick="closeEditRequestModal()" class="text-slate-400 hover:text-white text-xl">&times;</button>
+      </div>
+
+      <form id="edit-request-form" onsubmit="saveRequestEdit(event)" class="space-y-4">
+        <input type="hidden" id="edit-request-id" />
+        
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 mb-1">Detalle del Pedido / Destino</label>
+          <textarea id="edit-request-detail" rows="3" required class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-white text-sm"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 mb-1">Dirección / Ubicación del Servicio</label>
+          <input type="text" id="edit-request-address" class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-white text-sm" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 mb-1">Oferente / Proveedor Asignado (Reasignar)</label>
+          <select id="edit-request-provider-id" class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-white text-sm">
+            <option value="">-- Sin asignar / Pendiente --</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 mb-1">Estado de la Solicitud</label>
+          <select id="edit-request-status" required class="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-white text-sm">
+            <option value="pending">⏳ Pendiente</option>
+            <option value="assigned">🚀 Asignado (En curso)</option>
+            <option value="completed">✅ Completado</option>
+            <option value="cancelled">❌ Cancelado</option>
+          </select>
+        </div>
+
+        <div class="flex justify-end gap-3 mt-6">
+          <button type="button" onclick="closeEditRequestModal()" class="px-4 py-2 bg-slate-800 text-slate-300 text-sm rounded-lg hover:bg-slate-700">Cancelar</button>
+          <button type="submit" class="px-4 py-2 bg-sky-500 text-white text-sm font-semibold rounded-lg hover:bg-sky-600">Guardar Cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- MODAL: CREAR / EDITAR SERVICIO -->
   <div id="service-modal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 hidden">
@@ -368,8 +452,11 @@ export function renderAdminHtml() {
     let map = null;
     let markersLayer = null;
     let servicesCache = [];
+    let providersCache = [];
+    let requestsCache = [];
+    let activeChatRequestId = null;
+    let chatPollingInterval = null;
 
-    // Comprobar autenticación al inicio
     if (authToken) {
       document.getElementById('login-modal').classList.add('hidden');
       initDashboard();
@@ -410,17 +497,16 @@ export function renderAdminHtml() {
       };
     }
 
-    // Inicializar datos
     async function initDashboard() {
       loadWhatsAppStatus();
       loadMetrics();
       loadServices();
+      loadProviders();
       initMap();
       setInterval(loadMetrics, 10000);
       setInterval(loadWhatsAppStatus, 8000);
     }
 
-    // Cambiar Tabs
     function switchTab(tabId) {
       ['dashboard', 'services', 'providers', 'requests', 'customers', 'audit'].forEach(t => {
         document.getElementById('tab-' + t).classList.add('hidden');
@@ -438,7 +524,6 @@ export function renderAdminHtml() {
       else if (tabId === 'audit') loadAudit();
     }
 
-    // Estado WhatsApp
     async function loadWhatsAppStatus() {
       try {
         const res = await fetch('/api/status');
@@ -456,7 +541,6 @@ export function renderAdminHtml() {
       } catch (e) {}
     }
 
-    // Métricas
     async function loadMetrics() {
       try {
         const res = await fetch('/api/admin/metrics', { headers: authHeaders() });
@@ -469,10 +553,8 @@ export function renderAdminHtml() {
       } catch (e) {}
     }
 
-    // Mapa Leaflet
     function initMap() {
       if (!map) {
-        // Centrado en Chile Central (ej: Santiago / Rancagua)
         map = L.map('map').setView([-33.4489, -70.6693], 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap contributors'
@@ -516,7 +598,184 @@ export function renderAdminHtml() {
       } catch (e) {}
     }
 
+    // ============================================================
+    // LIVE CHAT & CONVERSACIONES
+    // ============================================================
+    function openChatModal(requestId) {
+      activeChatRequestId = requestId;
+      const req = requestsCache.find(r => r.id === requestId);
+      if (!req) return;
+
+      document.getElementById('chat-request-id').value = req.id;
+      document.getElementById('chat-customer-id').value = req.customer_id;
+      document.getElementById('chat-customer-phone').value = req.customer_phone;
+      document.getElementById('chat-service-emoji').innerText = req.service_emoji || '💬';
+      document.getElementById('chat-customer-title').innerText = (req.customer_name || 'Cliente') + ' — ' + (req.service_name || 'Servicio');
+      document.getElementById('chat-customer-sub').innerText = req.customer_phone + ' (Pedido #' + req.id + ')';
+      document.getElementById('chat-input-text').value = '';
+
+      document.getElementById('chat-modal').classList.remove('hidden');
+
+      fetchChatMessages(requestId, true);
+
+      // Polling cada 3 segundos
+      if (chatPollingInterval) clearInterval(chatPollingInterval);
+      chatPollingInterval = setInterval(() => {
+        if (activeChatRequestId) fetchChatMessages(activeChatRequestId, false);
+      }, 3000);
+    }
+
+    function closeChatModal() {
+      activeChatRequestId = null;
+      if (chatPollingInterval) clearInterval(chatPollingInterval);
+      document.getElementById('chat-modal').classList.add('hidden');
+    }
+
+    async function fetchChatMessages(requestId, shouldScrollBottom = false) {
+      try {
+        const res = await fetch(\`/api/admin/requests/\${requestId}/messages\`, { headers: authHeaders() });
+        const messages = await res.json();
+        const container = document.getElementById('chat-messages-container');
+
+        if (messages.length === 0) {
+          container.innerHTML = '<div class="text-center text-xs text-slate-500 py-8">No hay mensajes registrados aún en esta conversación.</div>';
+          return;
+        }
+
+        container.innerHTML = messages.map(m => {
+          const isCustomer = m.sender === 'customer';
+          const isAdmin = m.sender === 'admin';
+          const isBot = m.sender === 'bot';
+
+          const bubbleClass = isCustomer
+            ? 'bg-slate-800 text-slate-200 self-start mr-auto border border-slate-700'
+            : isAdmin
+              ? 'bg-sky-600 text-white self-end ml-auto shadow-md'
+              : 'bg-emerald-950 text-emerald-200 self-end ml-auto border border-emerald-800';
+
+          const senderBadge = isCustomer
+            ? '<span class="text-[10px] text-slate-400 font-semibold block mb-0.5">👤 ' + (m.customer_name || 'Cliente') + '</span>'
+            : isAdmin
+              ? '<span class="text-[10px] text-sky-200 font-semibold block mb-0.5">👨‍💼 Operador Admin (Tú)</span>'
+              : '<span class="text-[10px] text-emerald-400 font-semibold block mb-0.5">🤖 Bot Automático</span>';
+
+          const timeStr = new Date(m.created_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+
+          return \`
+            <div class="flex flex-col max-w-[82%] \${bubbleClass} rounded-2xl px-4 py-2.5 text-xs shadow-sm leading-relaxed">
+              \${senderBadge}
+              <div class="whitespace-pre-wrap">\${m.content}</div>
+              <span class="text-[9px] text-slate-400 mt-1 text-right self-end opacity-75">\${timeStr}</span>
+            </div>
+          \`;
+        }).join('');
+
+        if (shouldScrollBottom) {
+          container.scrollTop = container.scrollHeight;
+        }
+      } catch (e) {}
+    }
+
+    async function sendManualMessage(e) {
+      e.preventDefault();
+      const input = document.getElementById('chat-input-text');
+      const text = input.value.trim();
+      const phone = document.getElementById('chat-customer-phone').value;
+      const customerId = document.getElementById('chat-customer-id').value;
+      const requestId = document.getElementById('chat-request-id').value;
+
+      if (!text) return;
+
+      const btn = document.getElementById('chat-send-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span>Enviando...</span>';
+
+      try {
+        const res = await fetch('/api/admin/chat/send', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            phone,
+            customerId,
+            requestId,
+            message: text,
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          input.value = '';
+          fetchChatMessages(requestId, true);
+        } else {
+          alert('Error enviando mensaje: ' + (data.error || 'Desconocido'));
+        }
+      } catch (err) {
+        alert('Error conectando al servidor');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>Enviar</span> 🚀';
+      }
+    }
+
+    // ============================================================
+    // EDICIÓN DE SOLICITUDES
+    // ============================================================
+    function openEditRequestModal(requestId) {
+      const req = requestsCache.find(r => r.id === requestId);
+      if (!req) return;
+
+      document.getElementById('edit-request-id').value = req.id;
+      document.getElementById('edit-request-title').innerText = \`✏️ Editar Solicitud #\${req.id} (\${req.service_emoji} \${req.service_name})\`;
+      document.getElementById('edit-request-detail').value = req.request_detail || '';
+      document.getElementById('edit-request-address').value = req.location_address || '';
+      document.getElementById('edit-request-status').value = req.status;
+
+      // Cargar lista de oferentes de este servicio en el select
+      const select = document.getElementById('edit-request-provider-id');
+      select.innerHTML = '<option value="">-- Sin asignar / Pendiente --</option>';
+
+      const serviceProviders = providersCache.filter(p => p.serviceId === req.service_id);
+      serviceProviders.forEach(p => {
+        const isSelected = p.id === req.provider_id ? 'selected' : '';
+        select.innerHTML += \`<option value="\${p.id}" \${isSelected}>\${p.name} (\${p.phone}) \${p.businessName ? '- ' + p.businessName : ''}</option>\`;
+      });
+
+      document.getElementById('edit-request-modal').classList.remove('hidden');
+    }
+
+    function closeEditRequestModal() {
+      document.getElementById('edit-request-modal').classList.add('hidden');
+    }
+
+    async function saveRequestEdit(e) {
+      e.preventDefault();
+      const id = document.getElementById('edit-request-id').value;
+      const providerVal = document.getElementById('edit-request-provider-id').value;
+
+      const data = {
+        requestDetail: document.getElementById('edit-request-detail').value,
+        locationAddress: document.getElementById('edit-request-address').value,
+        providerId: providerVal ? parseInt(providerVal, 10) : null,
+        status: document.getElementById('edit-request-status').value,
+      };
+
+      try {
+        const res = await fetch(\`/api/admin/requests/\${id}\`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify(data)
+        });
+        const updated = await res.json();
+        closeEditRequestModal();
+        loadRequests();
+        loadMetrics();
+      } catch (err) {
+        alert('Error al guardar cambios de la solicitud');
+      }
+    }
+
+    // ============================================================
     // SERVICIOS
+    // ============================================================
     async function loadServices() {
       try {
         const res = await fetch('/api/admin/services', { headers: authHeaders() });
@@ -525,7 +784,6 @@ export function renderAdminHtml() {
         const filterSelect = document.getElementById('filter-provider-service');
         const modalSelect = document.getElementById('provider-service-id');
 
-        // Llenar selects
         filterSelect.innerHTML = '<option value="">Todos los Servicios</option>';
         modalSelect.innerHTML = '';
 
@@ -618,21 +876,23 @@ export function renderAdminHtml() {
       loadServices();
     }
 
+    // ============================================================
     // OFERENTES
+    // ============================================================
     async function loadProviders() {
       try {
         const svcId = document.getElementById('filter-provider-service').value;
         const url = svcId ? \`/api/admin/providers?serviceId=\${svcId}\` : '/api/admin/providers';
         const res = await fetch(url, { headers: authHeaders() });
-        const providers = await res.json();
+        providersCache = await res.json();
         const tbody = document.getElementById('providers-table-body');
 
-        if (providers.length === 0) {
+        if (providersCache.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-500">No hay oferentes registrados.</td></tr>';
           return;
         }
 
-        tbody.innerHTML = providers.map(p => \`
+        tbody.innerHTML = providersCache.map(p => \`
           <tr class="hover:bg-slate-800/50 transition">
             <td class="p-4 text-xs font-semibold text-sky-400">
               \${p.serviceEmoji || '📦'} \${p.serviceName || 'General'}
@@ -709,16 +969,18 @@ export function renderAdminHtml() {
       refreshMapMarkers();
     }
 
+    // ============================================================
     // SOLICITUDES
+    // ============================================================
     async function loadRequests() {
       try {
         const status = document.getElementById('filter-request-status').value;
         const url = status ? \`/api/admin/requests?status=\${status}\` : '/api/admin/requests';
         const res = await fetch(url, { headers: authHeaders() });
-        const requests = await res.json();
+        requestsCache = await res.json();
         const tbody = document.getElementById('requests-table-body');
 
-        if (requests.length === 0) {
+        if (requestsCache.length === 0) {
           tbody.innerHTML = '<tr><td colspan="9" class="p-6 text-center text-slate-500">No hay solicitudes registradas.</td></tr>';
           return;
         }
@@ -730,7 +992,7 @@ export function renderAdminHtml() {
           cancelled: '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-rose-950 text-rose-400 border border-rose-800">❌ Cancelado</span>',
         };
 
-        tbody.innerHTML = requests.map(r => \`
+        tbody.innerHTML = requestsCache.map(r => \`
           <tr class="hover:bg-slate-800/50 transition">
             <td class="p-4 font-mono text-slate-400 text-xs">#\${r.id}</td>
             <td class="p-4 font-semibold text-white text-xs">\${r.service_emoji} \${r.service_name}</td>
@@ -745,29 +1007,18 @@ export function renderAdminHtml() {
             </td>
             <td class="p-4">\${statusBadges[r.status] || r.status}</td>
             <td class="p-4 text-xs text-slate-500 font-mono">\${new Date(r.created_at).toLocaleString('es-CL', { hour: '2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'})}</td>
-            <td class="p-4 text-right space-x-1 text-xs">
-              \${r.status === 'pending' || r.status === 'assigned' ? \`
-                <button onclick="updateRequestStatus(\${r.id}, 'completed')" class="text-emerald-400 hover:underline">Completar</button>
-                <button onclick="updateRequestStatus(\${r.id}, 'cancelled')" class="text-rose-400 hover:underline">Cancelar</button>
-              \` : '-'}
+            <td class="p-4 text-right space-x-1.5 text-xs whitespace-nowrap">
+              <button onclick="openChatModal(\${r.id})" class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/40 rounded font-medium">💬 Chat</button>
+              <button onclick="openEditRequestModal(\${r.id})" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/40 text-sky-400 border border-sky-600/40 rounded font-medium">✏️ Editar</button>
             </td>
           </tr>
         \`).join('');
       } catch (e) {}
     }
 
-    async function updateRequestStatus(id, status) {
-      if (!confirm(\`¿Cambiar estado del pedido #\${id} a \${status}?\`)) return;
-      await fetch(\`/api/admin/requests/\${id}/status\`, {
-        method: 'PUT',
-        headers: authHeaders(),
-        body: JSON.stringify({ status })
-      });
-      loadRequests();
-      loadMetrics();
-    }
-
+    // ============================================================
     // CLIENTES
+    // ============================================================
     async function loadCustomers() {
       try {
         const res = await fetch('/api/admin/customers', { headers: authHeaders() });
@@ -775,7 +1026,7 @@ export function renderAdminHtml() {
         const tbody = document.getElementById('customers-table-body');
 
         if (customers.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-slate-500">No hay clientes aún.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-500">No hay clientes aún.</td></tr>';
           return;
         }
 
@@ -787,12 +1038,17 @@ export function renderAdminHtml() {
             <td class="p-4 text-xs text-slate-400 font-mono">\${c.currentStep}</td>
             <td class="p-4 text-xs">\${c.serviceName ? c.serviceEmoji + ' ' + c.serviceName : '-'}</td>
             <td class="p-4 text-xs text-slate-500 font-mono">\${new Date(c.createdAt).toLocaleDateString('es-CL')}</td>
+            <td class="p-4 text-right">
+              <a href="https://wa.me/\${c.phone.replace(/[^0-9]/g, '')}" target="_blank" class="text-xs text-emerald-400 hover:underline">WhatsApp</a>
+            </td>
           </tr>
         \`).join('');
       } catch (e) {}
     }
 
+    // ============================================================
     // AUDITORÍA
+    // ============================================================
     async function loadAudit() {
       try {
         const res = await fetch('/api/admin/audit', { headers: authHeaders() });

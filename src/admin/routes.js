@@ -14,12 +14,20 @@ import {
 } from '../services/providersManager.js';
 import {
   getAllRequests,
+  getRequestById,
+  updateServiceRequest,
   cancelServiceRequest,
   completeServiceRequest,
   getAuditNotifications,
   getSystemMetrics,
 } from '../services/requestsManager.js';
+import {
+  saveChatMessage,
+  getChatMessagesByRequest,
+  getChatMessagesByCustomer,
+} from '../services/chatManager.js';
 import { getAllCustomers } from '../services/customersManager.js';
+import { sendMessage } from '../bot/whatsapp.js';
 
 /**
  * Registra todas las rutas del panel de administración en Fastify.
@@ -109,6 +117,17 @@ export async function registerAdminRoutes(fastify) {
     });
   });
 
+  fastify.get('/api/admin/requests/:id', { preHandler: checkAuth }, async (request) => {
+    const id = parseInt(request.params.id, 10);
+    return await getRequestById(id);
+  });
+
+  // Edición completa de una solicitud (Detalle, Ubicación, Oferente asignado, Estado)
+  fastify.put('/api/admin/requests/:id', { preHandler: checkAuth }, async (request) => {
+    const id = parseInt(request.params.id, 10);
+    return await updateServiceRequest(id, request.body);
+  });
+
   fastify.put('/api/admin/requests/:id/status', { preHandler: checkAuth }, async (request) => {
     const id = parseInt(request.params.id, 10);
     const { status } = request.body || {};
@@ -120,17 +139,59 @@ export async function registerAdminRoutes(fastify) {
     return { success: false, error: 'Estado no soportado' };
   });
 
-  // 6. Clientes
+  // 6. Live Chat (Mensajes y Respuesta en Vivo)
+  fastify.get('/api/admin/requests/:id/messages', { preHandler: checkAuth }, async (request) => {
+    const id = parseInt(request.params.id, 10);
+    return await getChatMessagesByRequest(id);
+  });
+
+  fastify.get('/api/admin/customers/:id/messages', { preHandler: checkAuth }, async (request) => {
+    const id = parseInt(request.params.id, 10);
+    return await getChatMessagesByCustomer(id);
+  });
+
+  // Enviar mensaje directo de WhatsApp desde el panel de administración al cliente
+  fastify.post('/api/admin/chat/send', { preHandler: checkAuth }, async (request, reply) => {
+    const { phone, customerId, requestId, message } = request.body || {};
+    if (!phone || !message || !message.trim()) {
+      reply.status(400);
+      return { success: false, error: 'Teléfono y mensaje requeridos' };
+    }
+
+    try {
+      const cleanPhone = phone.replace(/[^0-9]/g, '');
+      const jid = `${cleanPhone}@s.whatsapp.net`;
+
+      // 1. Enviar vía Baileys socket
+      await sendMessage(jid, message.trim());
+
+      // 2. Guardar en base de datos con sender: 'admin'
+      const saved = await saveChatMessage({
+        customerId: customerId ? parseInt(customerId, 10) : null,
+        requestId: requestId ? parseInt(requestId, 10) : null,
+        sender: 'admin',
+        content: message.trim(),
+      });
+
+      return { success: true, message: saved };
+    } catch (error) {
+      console.error('Error enviando mensaje manual desde admin:', error);
+      reply.status(500);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 7. Clientes
   fastify.get('/api/admin/customers', { preHandler: checkAuth }, async () => {
     return await getAllCustomers();
   });
 
-  // 7. Auditoría de Notificaciones
+  // 8. Auditoría de Notificaciones
   fastify.get('/api/admin/audit', { preHandler: checkAuth }, async () => {
     return await getAuditNotifications(100);
   });
 
-  // 8. Interfaz Web del Administrador
+  // 9. Interfaz Web del Administrador
   fastify.get('/admin', async (request, reply) => {
     reply.type('text/html');
     return renderAdminHtml();
