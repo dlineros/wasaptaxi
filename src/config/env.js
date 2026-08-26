@@ -12,9 +12,18 @@ const optional = (key, defaultValue) => {
   return process.env[key] || defaultValue;
 };
 
+const getDatabaseUrl = () => {
+  const envUrl = process.env.DATABASE_URL;
+  // Si la variable en Coolify sigue usando el usuario 'postgres' (que falla auth), usar las credenciales verificadas
+  if (!envUrl || envUrl.includes('//postgres:') || envUrl.includes('/postgres')) {
+    return 'postgres://wasaptaxi:wasaptaxi2026@fdypyggndssrlgmpokixghv9:5432/wasaptaxi';
+  }
+  return envUrl;
+};
+
 export const config = {
-  // Base de datos (usa variable o fallback interno de Coolify)
-  databaseUrl: optional('DATABASE_URL', 'postgres://wasaptaxi:wasaptaxi2026@fdypyggndssrlgmpokixghv9:5432/wasaptaxi'),
+  // Base de datos (credenciales verificadas)
+  databaseUrl: getDatabaseUrl(),
 
   // Bot
   botPhoneNumber: optional('BOT_PHONE_NUMBER', '+56930268900'),
