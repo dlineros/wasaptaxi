@@ -1,345 +1,295 @@
-import { sendMessage } from './whatsapp.js';
-import { passengerMessages, driverMessages } from './messages.js';
-import { findOrCreatePassenger } from '../services/passengers.js';
-import { findDriverByPhone, getActiveDrivers, getNearbyDrivers, updateDriverLocation, setDriverActive } from '../services/drivers.js';
-import { createRide, acceptRide, rejectRide, completeRide, cancelRide, recordNotification, getActiveRideForPassenger, getActiveRideForDriver, getPendingRideForDriver } from '../services/rides.js';
-import { reverseGeocode } from '../services/geocoding.js';
-import { config } from '../config/env.js';
-
-// ============================================================
-// Estado de conversación en memoria (para el piloto es suficiente)
-// ============================================================
-// Mapa: jid → { step, data }
-// Steps: 'idle', 'waiting_location', 'waiting_destination'
-const conversationState = new Map();
-
-function getState(jid) {
-  return conversationState.get(jid) || { step: 'idle', data: {} };
-}
-
-function setState(jid, step, data = {}) {
-  conversationState.set(jid, { step, data: { ...getState(jid).data, ...data } });
-}
-
-function clearState(jid) {
-  conversationState.delete(jid);
-}
-
-// ============================================================
-// Handler principal de mensajes
-// ============================================================
+import { getActiveServices, getServiceById } from '../services/servicesManager.js';
+import {
+  findProviderByPhone,
+  updateProviderLocation,
+  findNearbyProviders,
+} from '../services/providersManager.js';
+import {
+  findOrCreateCustomer,
+  updateCustomerStep,
+} from '../services/customersManager.js';
+import {
+  createServiceRequest,
+  acceptServiceRequest,
+  cancelServiceRequest,
+  getActiveRequestForCustomer,
+  getLatestPendingOfferForProvider,
+  logNotification,
+} from '../services/requestsManager.js';
+import { geocodeAddress, reverseGeocode } from '../services/geocoding.js';
+import { sendMessage, sendLocation } from './whatsapp.js';
+import * as msg from './messages.js';
 
 /**
- * Procesa un mensaje entrante de WhatsApp.
- * Determina si es pasajero o taxista y delega al flujo correspondiente.
+ * Enrutador principal de mensajes de WhatsApp.
  */
-export async function handleMessage(msg) {
-  const jid = msg.key.remoteJid;
+export async function handleMessage(msgObj) {
+  const jid = msgObj.key.remoteJid;
+  const phone = jid.replace('@s.whatsapp.net', '');
+  const pushName = msgObj.pushName || 'Usuario';
 
-  // Verificar si es un taxista registrado
-  const driver = await findDriverByPhone(jid);
+  // Extraer texto o ubicación del payload de Baileys
+  const messageContent = msgObj.message;
+  const text = (
+    messageContent?.conversation ||
+    messageContent?.extendedTextMessage?.text ||
+    ''
+  ).trim();
 
-  if (driver) {
-    await handleDriverMessage(msg, jid, driver);
-  } else {
-    await handlePassengerMessage(msg, jid);
-  }
-}
+  const locationMsg =
+    messageContent?.locationMessage ||
+    messageContent?.liveLocationMessage;
 
-// ============================================================
-// Flujo del PASAJERO
-// ============================================================
+  const lowerText = text.toLowerCase();
 
-async function handlePassengerMessage(msg, jid) {
-  const state = getState(jid);
-  const text = extractText(msg)?.trim().toUpperCase();
-  const location = extractLocation(msg);
+  // ============================================================
+  // 1. ¿Es un Oferente / Proveedor registrado?
+  // ============================================================
+  const provider = await findProviderByPhone(phone);
 
-  // Obtener o crear pasajero
-  const passenger = await findOrCreatePassenger(jid);
+  if (provider) {
+    // Si el oferente envía ubicación GPS, actualizar su posición
+    if (locationMsg) {
+      const { degreesLatitude: lat, degreesLongitude: lng } = locationMsg;
+      await updateProviderLocation(phone, lat, lng);
+      await sendMessage(jid, `📍 Ubicación actualizada como proveedor de *${provider.serviceEmoji} ${provider.serviceName}*. ¡Gracias!`);
+      return;
+    }
 
-  // Verificar si tiene carrera activa
-  const activeRide = await getActiveRideForPassenger(passenger.id);
+    // Si el oferente escribe "1" o "tomar [id]" o "aceptar [id]"
+    if (text === '1' || lowerText.startsWith('tomar') || lowerText.startsWith('aceptar')) {
+      let targetRequestId = null;
 
-  // --- Comandos especiales ---
-  if (text === 'CANCELAR' && activeRide) {
-    await cancelRide(activeRide.id);
-    clearState(jid);
-    await sendMessage(jid, passengerMessages.rideCancelled());
-    return;
-  }
-
-  if (text === 'ESTADO' && activeRide) {
-    await sendMessage(jid, passengerMessages.rideStatus(activeRide, null));
-    return;
-  }
-
-  if (activeRide) {
-    await sendMessage(jid, passengerMessages.alreadyHaveActiveRide());
-    return;
-  }
-
-  // --- Flujo normal ---
-  switch (state.step) {
-    case 'idle':
-    case 'waiting_location':
-      if (location) {
-        // Recibió ubicación → geocodificar y pedir destino
-        const address = await reverseGeocode(location.lat, location.lng);
-        setState(jid, 'waiting_destination', {
-          pickupLat: location.lat,
-          pickupLng: location.lng,
-          pickupAddress: address,
-          passengerId: passenger.id,
-        });
-        await sendMessage(jid, passengerMessages.locationReceived(address));
+      const parts = text.split(/\s+/);
+      if (parts.length > 1 && !isNaN(parseInt(parts[1], 10))) {
+        targetRequestId = parseInt(parts[1], 10);
       } else {
-        // Mensaje de texto sin ubicación → dar bienvenida
-        await sendMessage(jid, passengerMessages.welcome());
-        setState(jid, 'waiting_location');
+        // Si solo escribió "1", buscar la oferta pendiente más reciente para este proveedor
+        const pendingOffer = await getLatestPendingOfferForProvider(provider.id);
+        if (pendingOffer) {
+          targetRequestId = pendingOffer.id;
+        }
       }
-      break;
 
-    case 'waiting_destination':
-      if (text) {
-        // Recibió destino → crear carrera y buscar taxista
-        const rawText = extractText(msg)?.trim(); // Sin uppercase para el destino
-        const data = state.data;
+      if (!targetRequestId) {
+        await sendMessage(jid, '⚠️ No tienes solicitudes pendientes activas en este momento o el pedido ya expiró.');
+        return;
+      }
 
-        await sendMessage(jid, passengerMessages.searchingDriver(rawText));
+      // Intentar aceptar con transacción y lock
+      const acceptResult = await acceptServiceRequest(targetRequestId, provider.id);
 
-        // Crear carrera
-        const ride = await createRide({
-          passengerId: data.passengerId,
-          pickupLatitude: data.pickupLat,
-          pickupLongitude: data.pickupLng,
-          pickupAddress: data.pickupAddress,
-          destinationText: rawText,
-        });
+      if (acceptResult.success) {
+        const req = acceptResult.request;
+        const service = await getServiceById(req.service_id);
 
-        // Buscar taxistas cercanos
-        const nearbyDrivers = await getNearbyDrivers(
-          data.pickupLat,
-          data.pickupLng,
-          config.bot.searchRadiusKm
+        // Notificar al oferente ganador
+        await sendMessage(
+          jid,
+          msg.providerWonRequestMessage(
+            service,
+            req.id,
+            req.request_detail,
+            req.location_address,
+            req.customerName,
+            req.customerPhone
+          )
         );
 
-        if (nearbyDrivers.length === 0) {
-          await cancelRide(ride.id);
-          clearState(jid);
-          await sendMessage(jid, passengerMessages.noDriversAvailable());
-          return;
+        // Si el pedido tiene coordenadas GPS, enviarle el pin de ubicación al oferente
+        if (req.location_latitude && req.location_longitude) {
+          await sendLocation(
+            jid,
+            parseFloat(req.location_latitude),
+            parseFloat(req.location_longitude),
+            `Ubicación Pedido #${req.id}`
+          );
         }
 
-        // Notificar a taxistas cercanos
-        for (const driver of nearbyDrivers) {
-          const driverJid = phoneToJid(driver.phone);
-          await recordNotification(ride.id, driver.id);
-          await sendMessage(driverJid, driverMessages.newRide(ride, data.pickupAddress));
-        }
+        // Notificar al cliente
+        const customerJid = `${req.customerPhone.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        await sendMessage(
+          customerJid,
+          msg.clientAssignedMessage(service, req.id, provider)
+        );
 
-        clearState(jid);
-      } else if (location) {
-        // Enviaron otra ubicación en vez de texto → asumir que es nueva ubicación
-        const address = await reverseGeocode(location.lat, location.lng);
-        setState(jid, 'waiting_destination', {
-          ...state.data,
-          pickupLat: location.lat,
-          pickupLng: location.lng,
-          pickupAddress: address,
-        });
-        await sendMessage(jid, passengerMessages.locationReceived(address));
+        // Actualizar paso del cliente a IDLE
+        await updateCustomerStep(req.customerPhone, 'IDLE');
+        return;
       } else {
-        await sendMessage(jid, '✍️ Escríbeme tu destino (ej: "Mall Plaza Oeste")');
+        // Pedido tomado por otro
+        await sendMessage(jid, msg.requestAlreadyTakenMessage(targetRequestId));
+        return;
       }
-      break;
-
-    default:
-      clearState(jid);
-      await sendMessage(jid, passengerMessages.welcome());
-      break;
+    }
   }
-}
 
-// ============================================================
-// Flujo del TAXISTA
-// ============================================================
+  // ============================================================
+  // 2. Flujo de Clientes (Solicitudes de Servicios)
+  // ============================================================
+  const customer = await findOrCreateCustomer(phone, pushName);
+  const activeServices = await getActiveServices();
 
-async function handleDriverMessage(msg, jid, driver) {
-  const text = extractText(msg)?.trim().toUpperCase();
-  const location = extractLocation(msg);
-
-  // --- Ubicación → actualizar posición ---
-  if (location) {
-    await updateDriverLocation(driver.id, location.lat, location.lng);
-    const address = await reverseGeocode(location.lat, location.lng);
-    await sendMessage(jid, driverMessages.locationUpdated(address));
+  // Comando global: CANCELAR
+  if (lowerText === 'cancelar' || lowerText === 'salir') {
+    const activeReq = await getActiveRequestForCustomer(customer.id);
+    if (activeReq && activeReq.status === 'pending') {
+      await cancelServiceRequest(activeReq.id);
+      await sendMessage(jid, msg.requestCancelledMessage(activeReq.id));
+    } else {
+      await sendMessage(jid, 'ℹ️ Operación cancelada. Escribe *hola* para ver el menú.');
+    }
+    await updateCustomerStep(phone, 'IDLE', null, null);
     return;
   }
 
-  // --- Comandos del taxista ---
-  switch (text) {
-    case 'SI':
-    case 'SÍ':
-    case 'ACEPTAR': {
-      const pendingRide = await getPendingRideForDriver(driver.id);
-      if (!pendingRide) {
-        await sendMessage(jid, driverMessages.noActiveRide());
-        return;
-      }
-
-      const result = await acceptRide(pendingRide.id, driver.id);
-
-      if (result.success) {
-        // Notificar al taxista
-        const passenger = await getPassengerById(result.ride.passenger_id);
-        await sendMessage(jid, driverMessages.rideAccepted(passenger));
-
-        // Notificar al pasajero
-        const passengerJid = phoneToJid(passenger.phone);
-        await sendMessage(passengerJid, passengerMessages.rideAccepted(driver));
-
-        // Enviar ubicación del pasajero al taxista
-        if (result.ride.pickup_latitude && result.ride.pickup_longitude) {
-          const { sendLocation } = await import('./whatsapp.js');
-          await sendLocation(
-            jid,
-            parseFloat(result.ride.pickup_latitude),
-            parseFloat(result.ride.pickup_longitude),
-            'Punto de recogida'
-          );
-        }
-      } else {
-        await sendMessage(jid, driverMessages.rideAlreadyTaken());
-      }
-      break;
-    }
-
-    case 'NO':
-    case 'RECHAZAR': {
-      const pendingRide = await getPendingRideForDriver(driver.id);
-      if (pendingRide) {
-        await rejectRide(pendingRide.id, driver.id);
-      }
-      await sendMessage(jid, driverMessages.rideRejected());
-      break;
-    }
-
-    case 'COMPLETAR':
-    case 'FINALIZAR': {
-      const activeRide = await getActiveRideForDriver(driver.id);
-      if (!activeRide) {
-        await sendMessage(jid, driverMessages.noActiveRide());
-        return;
-      }
-      await completeRide(activeRide.id);
-      await sendMessage(jid, driverMessages.rideCompleted());
-
-      // Notificar al pasajero
-      const passenger = await getPassengerById(activeRide.passenger_id || activeRide.passengerId);
-      if (passenger) {
-        const passengerJid = phoneToJid(passenger.phone);
-        await sendMessage(passengerJid, passengerMessages.rideCompleted());
-      }
-      break;
-    }
-
-    case 'CANCELAR': {
-      const activeRide = await getActiveRideForDriver(driver.id);
-      if (!activeRide) {
-        await sendMessage(jid, driverMessages.noActiveRide());
-        return;
-      }
-      await cancelRide(activeRide.id);
-      await sendMessage(jid, driverMessages.rideCancelled());
-
-      // Notificar al pasajero
-      const passenger = await getPassengerById(activeRide.passenger_id || activeRide.passengerId);
-      if (passenger) {
-        const passengerJid = phoneToJid(passenger.phone);
-        await sendMessage(passengerJid, passengerMessages.rideCancelled());
-      }
-      break;
-    }
-
-    case 'ACTIVO':
-      await setDriverActive(driver.id, true);
-      await sendMessage(jid, driverMessages.activated());
-      break;
-
-    case 'INACTIVO':
-      await setDriverActive(driver.id, false);
-      await sendMessage(jid, driverMessages.deactivated());
-      break;
-
-    case 'ESTADO': {
-      const activeRide = await getActiveRideForDriver(driver.id);
-      await sendMessage(jid, driverMessages.status(activeRide));
-      break;
-    }
-
-    case 'AYUDA':
-    case 'HELP':
-      await sendMessage(jid, driverMessages.help());
-      break;
-
-    default:
-      await sendMessage(jid, driverMessages.help());
-      break;
+  // Comando global: HOLA o MENÚ
+  if (lowerText === 'hola' || lowerText === 'menu' || lowerText === 'menú' || lowerText === 'inicio' || customer.currentStep === 'IDLE') {
+    await updateCustomerStep(phone, 'MENU', null, null);
+    await sendMessage(jid, msg.menuMessage(customer.name || pushName, activeServices));
+    return;
   }
+
+  // ------------------------------------------------------------
+  // PASO 1: SELECCIÓN DEL MENÚ
+  // ------------------------------------------------------------
+  if (customer.currentStep === 'MENU') {
+    const selectionIndex = parseInt(text, 10) - 1;
+
+    if (!isNaN(selectionIndex) && selectionIndex >= 0 && selectionIndex < activeServices.length) {
+      const chosenService = activeServices[selectionIndex];
+
+      // Avanzar al paso de detalle
+      await updateCustomerStep(phone, 'WAITING_DETAIL', chosenService.id, null);
+      await sendMessage(jid, msg.promptDetailMessage(chosenService));
+      return;
+    } else {
+      await sendMessage(jid, `⚠️ Opción no válida. Por favor responde con un número del 1 al ${activeServices.length}.\n\n` + msg.menuMessage(customer.name, activeServices));
+      return;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // PASO 2: RECIBIR DETALLE DEL PEDIDO / DESTINO
+  // ------------------------------------------------------------
+  if (customer.currentStep === 'WAITING_DETAIL') {
+    const service = await getServiceById(customer.selectedServiceId);
+    if (!service) {
+      await updateCustomerStep(phone, 'IDLE');
+      await sendMessage(jid, '⚠️ El servicio ya no está disponible. Escribe *hola* para reiniciar.');
+      return;
+    }
+
+    if (!text || text.length < 2) {
+      await sendMessage(jid, '⚠️ Por favor ingresa una descripción o detalle válido para tu solicitud.');
+      return;
+    }
+
+    const detailText = text;
+
+    if (service.requiresLocation) {
+      // Guardar detalle y pedir ubicación
+      await updateCustomerStep(phone, 'WAITING_LOCATION', service.id, detailText);
+      await sendMessage(jid, msg.promptLocationMessage(service));
+      return;
+    } else {
+      // Si el servicio no requiere ubicación GPS, crear la solicitud de inmediato
+      await finalizeAndDispatchService(jid, customer, service, detailText, null, null, null);
+      return;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // PASO 3: RECIBIR UBICACIÓN GPS O DIRECCIÓN EN TEXTO
+  // ------------------------------------------------------------
+  if (customer.currentStep === 'WAITING_LOCATION') {
+    const service = await getServiceById(customer.selectedServiceId);
+    if (!service) {
+      await updateCustomerStep(phone, 'IDLE');
+      await sendMessage(jid, '⚠️ Error en la sesión. Escribe *hola* para reiniciar.');
+      return;
+    }
+
+    let lat = null;
+    let lng = null;
+    let address = null;
+
+    if (locationMsg) {
+      lat = locationMsg.degreesLatitude;
+      lng = locationMsg.degreesLongitude;
+      const rev = await reverseGeocode(lat, lng);
+      address = rev.formattedAddress || 'Ubicación GPS compartida';
+    } else if (text && text.length > 3) {
+      address = text;
+      const geo = await geocodeAddress(address);
+      if (geo.latitude && geo.longitude) {
+        lat = geo.latitude;
+        lng = geo.longitude;
+        address = geo.formattedAddress;
+      }
+    } else {
+      await sendMessage(jid, '⚠️ Por favor comparte tu ubicación actual o escribe tu dirección.');
+      return;
+    }
+
+    await finalizeAndDispatchService(jid, customer, service, customer.tempDetail, lat, lng, address);
+    return;
+  }
+
+  // Respuesta por defecto
+  await sendMessage(jid, msg.helpMessage());
 }
 
-// ============================================================
-// Helpers
-// ============================================================
-
 /**
- * Extrae el texto de un mensaje de WhatsApp.
+ * Crea la solicitud en la base de datos y la despacha a los oferentes del rubro.
  */
-function extractText(msg) {
-  return (
-    msg.message?.conversation ||
-    msg.message?.extendedTextMessage?.text ||
-    null
+async function finalizeAndDispatchService(jid, customer, service, detailText, lat, lng, address) {
+  // 1. Crear solicitud en estado 'pending'
+  const newRequest = await createServiceRequest({
+    customerId: customer.id,
+    serviceId: service.id,
+    requestDetail: detailText,
+    locationLatitude: lat,
+    locationLongitude: lng,
+    locationAddress: address,
+  });
+
+  // 2. Actualizar estado del cliente
+  await updateCustomerStep(customer.phone, 'ACTIVE_REQUEST', service.id, null);
+
+  // 3. Confirmar al cliente
+  await sendMessage(
+    jid,
+    msg.requestCreatedClientMessage(service, newRequest.id, detailText, address)
   );
-}
 
-/**
- * Extrae la ubicación de un mensaje de WhatsApp.
- * @returns {{ lat: number, lng: number } | null}
- */
-function extractLocation(msg) {
-  const loc =
-    msg.message?.locationMessage ||
-    msg.message?.liveLocationMessage ||
-    null;
+  // 4. Buscar oferentes activos de este servicio
+  const nearbyProviders = await findNearbyProviders(service.id, lat, lng);
+  console.log(`📢 Despachando solicitud #${newRequest.id} (${service.name}) a ${nearbyProviders.length} proveedores.`);
 
-  if (loc) {
-    return {
-      lat: loc.degreesLatitude,
-      lng: loc.degreesLongitude,
-    };
+  // 5. Notificar a cada oferente por WhatsApp
+  for (const prov of nearbyProviders) {
+    try {
+      const provJid = `${prov.phone.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+      await sendMessage(
+        provJid,
+        msg.notifyProviderMessage(service, newRequest.id, detailText, address, prov.distance_km)
+      );
+
+      // Si hay ubicación GPS, enviar también el pin
+      if (lat && lng) {
+        await sendLocation(
+          provJid,
+          parseFloat(lat),
+          parseFloat(lng),
+          `Ubicación Pedido #${newRequest.id}`
+        );
+      }
+
+      // Registrar notificación en auditoría
+      await logNotification(newRequest.id, prov.id);
+    } catch (err) {
+      console.error(`Error notificando a proveedor ${prov.phone}:`, err.message);
+    }
   }
-  return null;
-}
-
-/**
- * Convierte un teléfono normalizado a JID de WhatsApp.
- * "+56930268900" → "56930268900@s.whatsapp.net"
- */
-function phoneToJid(phone) {
-  const clean = phone.replace('+', '');
-  return `${clean}@s.whatsapp.net`;
-}
-
-/**
- * Obtiene un pasajero por ID.
- */
-async function getPassengerById(passengerId) {
-  const { eq } = await import('drizzle-orm');
-  const { getDb } = await import('../db/connection.js');
-  const { passengers } = await import('../db/schema.js');
-  const db = getDb();
-  const result = await db.select().from(passengers).where(eq(passengers.id, passengerId)).limit(1);
-  return result.length > 0 ? result[0] : null;
 }

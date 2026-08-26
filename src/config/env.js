@@ -13,14 +13,17 @@ const optional = (key, defaultValue) => {
 };
 
 export const config = {
-  // Base de datos — usa red interna Docker (coolify network)
-  databaseUrl: 'postgres://wasaptaxi:wasaptaxi2026@fdypyggndssrlgmpokixghv9:5432/wasaptaxi',
+  // Base de datos (usa variable o fallback interno de Coolify)
+  databaseUrl: optional('DATABASE_URL', 'postgres://wasaptaxi:wasaptaxi2026@fdypyggndssrlgmpokixghv9:5432/wasaptaxi'),
 
   // Bot
   botPhoneNumber: optional('BOT_PHONE_NUMBER', '+56930268900'),
 
   // Google Maps
   googleMapsApiKey: optional('GOOGLE_MAPS_API_KEY', ''),
+
+  // Panel Administrador
+  adminPassword: optional('ADMIN_PASSWORD', 'admin123'),
 
   // Servidor
   port: parseInt(optional('PORT', '3000'), 10),

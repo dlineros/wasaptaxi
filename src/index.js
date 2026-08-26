@@ -4,13 +4,14 @@ import { getDb, closeDb } from './db/connection.js';
 import { initDb } from './db/init.js';
 import { initWhatsApp, getWhatsAppStatus, requestPairing } from './bot/whatsapp.js';
 import { handleMessage } from './bot/handlers.js';
+import { registerAdminRoutes } from './admin/routes.js';
 
 // ============================================================
 // Entry Point — WasapTaxi
 // ============================================================
 
 async function main() {
-  console.log('🚕 WasapTaxi — Iniciando...\n');
+  console.log('🚕 WasapTaxi & Multi-Servicios — Iniciando...\n');
 
   // 1. Conectar a la base de datos e inicializar tablas
   console.log('📦 Conectando a PostgreSQL...');
@@ -18,14 +19,17 @@ async function main() {
     getDb();
     console.log('✅ PostgreSQL conectado.');
     await initDb();
-    console.log('✅ Base de datos lista.\n');
+    console.log('✅ Base de datos multi-servicio lista.\n');
   } catch (error) {
     console.error('❌ Error conectando/inicializando PostgreSQL:', error.message);
     process.exit(1);
   }
 
-  // 2. Iniciar servidor HTTP (health checks y panel web de vinculación)
+  // 2. Iniciar servidor HTTP (health checks, panel admin y QR)
   const fastify = Fastify({ logger: false });
+
+  // Registrar módulo administrador web (/admin y /api/admin/*)
+  await registerAdminRoutes(fastify);
 
   fastify.get('/health', async () => {
     const status = getWhatsAppStatus();
@@ -53,7 +57,7 @@ async function main() {
     }
   });
 
-  // Página web para escanear QR o ver estado
+  // Redirigir la raíz al administrador o panel QR
   fastify.get('/', async (request, reply) => {
     reply.type('text/html');
     const status = getWhatsAppStatus();
