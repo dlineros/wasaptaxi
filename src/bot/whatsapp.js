@@ -149,21 +149,25 @@ export async function requestPairing(phoneNumber) {
  * Envía un mensaje de texto con delay aleatorio para evitar bans.
  */
 export async function sendMessage(jid, text) {
-  if (!sock) throw new Error('WhatsApp no está conectado');
+  if (!sock || !isConnected || !sock?.user) {
+    throw new Error('El bot de WhatsApp no está conectado o no ha sido vinculado. Abre https://was.sitiospro.cl/ y escanea el código QR.');
+  }
 
   const delay = config.bot.minDelay +
     Math.random() * (config.bot.maxDelay - config.bot.minDelay);
   await new Promise((resolve) => setTimeout(resolve, delay));
 
-  await sock.sendMessage(jid, { text });
+  return await sock.sendMessage(jid, { text });
 }
 
 /**
  * Envía ubicación.
  */
 export async function sendLocation(jid, latitude, longitude, name) {
-  if (!sock) throw new Error('WhatsApp no está conectado');
-  await sock.sendMessage(jid, {
+  if (!sock || !isConnected || !sock?.user) {
+    throw new Error('El bot de WhatsApp no está conectado o no ha sido vinculado.');
+  }
+  return await sock.sendMessage(jid, {
     location: {
       degreesLatitude: latitude,
       degreesLongitude: longitude,

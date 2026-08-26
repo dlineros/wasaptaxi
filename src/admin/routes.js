@@ -153,13 +153,34 @@ export async function registerAdminRoutes(fastify) {
   // Enviar mensaje directo de WhatsApp desde el panel de administración al cliente
   fastify.post('/api/admin/chat/send', { preHandler: checkAuth }, async (request, reply) => {
     const { phone, customerId, requestId, message } = request.body || {};
-    if (!phone || !message || !message.trim()) {
+    if ((!phone && !customerId && !requestId) || !message || !message.trim()) {
       reply.status(400);
-      return { success: false, error: 'Teléfono y mensaje requeridos' };
+      return { success: false, error: 'Destinatario y mensaje son requeridos' };
     }
 
     try {
-      const cleanPhone = phone.replace(/[^0-9]/g, '');
+      let targetPhone = phone;
+      let targetCustomerId = customerId;
+
+      if (!targetPhone && requestId) {
+        const req = await getRequestById(parseInt(requestId, 10));
+        if (req) {
+          targetPhone = req.customer_phone;
+          targetCustomerId = req.customer_id;
+        }
+      }
+
+      if (!targetCustomerId && targetPhone) {
+        const cust = await findOrCreateCustomer(targetPhone);
+        targetCustomerId = cust?.id;
+      }
+
+      if (!targetPhone) {
+        reply.status(400);
+        return { success: false, error: 'No se encontró el teléfono del cliente' };
+      }
+
+      const cleanPhone = targetPhone.replace(/[^0-9]/g, '');
       const jid = `${cleanPhone}@s.whatsapp.net`;
 
       // 1. Enviar vía Baileys socket
@@ -167,7 +188,7 @@ export async function registerAdminRoutes(fastify) {
 
       // 2. Guardar en base de datos con sender: 'admin'
       const saved = await saveChatMessage({
-        customerId: customerId ? parseInt(customerId, 10) : null,
+        customerId: targetCustomerId ? parseInt(targetCustomerId, 10) : null,
         requestId: requestId ? parseInt(requestId, 10) : null,
         sender: 'admin',
         content: message.trim(),
@@ -176,7 +197,7 @@ export async function registerAdminRoutes(fastify) {
       return { success: true, message: saved };
     } catch (error) {
       console.error('Error enviando mensaje manual desde admin:', error);
-      reply.status(500);
+      reply.status(400);
       return { success: false, error: error.message };
     }
   });
