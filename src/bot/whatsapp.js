@@ -36,14 +36,18 @@ export async function initWhatsApp(onMessage) {
   // Guardar credenciales cuando se actualizan
   sock.ev.on('creds.update', saveCreds);
 
+  let qrAttempt = 0;
+
   // Manejar cambios de conexión
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📱 Escanea este QR con tu WhatsApp:');
-      console.log('   (WhatsApp → Dispositivos vinculados → Vincular dispositivo)\n');
-      qrcode.generate(qr, { small: true });
+      qrAttempt++;
+      console.log(`\n📱 QR #${qrAttempt} — Escanea RÁPIDO (expira en ~20s):`);
+      console.log('   WhatsApp → ⋮ → Dispositivos vinculados → Vincular dispositivo\n');
+      qrcode.generate(qr, { small: false });
+      console.log(`\n🔗 QR raw (si no se ve arriba): ${qr}\n`);
     }
 
     if (connection === 'close') {
