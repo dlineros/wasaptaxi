@@ -13,8 +13,8 @@ const optional = (key, defaultValue) => {
 };
 
 export const config = {
-  // Base de datos (fallback hardcoded para deploy inicial)
-  databaseUrl: optional('DATABASE_URL', 'postgres://wasaptaxi:wasaptaxi2026@159.89.237.93:5432/wasaptaxi'),
+  // Base de datos — hardcoded hasta corregir variable en Coolify
+  databaseUrl: 'postgres://wasaptaxi:wasaptaxi2026@159.89.237.93:5432/wasaptaxi',
 
   // Bot
   botPhoneNumber: optional('BOT_PHONE_NUMBER', '+56930268900'),
