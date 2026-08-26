@@ -17,8 +17,13 @@ export function getDb() {
       connectionString: config.databaseUrl,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 15000,
+      statement_timeout: 10000,
     });
+    
+    // Log connection target (sin password)
+    const safeUrl = config.databaseUrl.replace(/:([^@]+)@/, ':***@');
+    console.log(`   Conectando a: ${safeUrl}`);
 
     pool.on('error', (err) => {
       console.error('Error inesperado en pool de PostgreSQL:', err);
