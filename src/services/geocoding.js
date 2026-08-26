@@ -4,14 +4,50 @@ import { config } from '../config/env.js';
 const client = new Client({});
 
 /**
+ * Convierte una dirección en texto a coordenadas (lat, lng) usando Google Maps.
+ * @param {string} address
+ * @returns {Promise<{ latitude: number|null, longitude: number|null, formattedAddress: string }>}
+ */
+export async function geocodeAddress(address) {
+  if (!config.googleMapsApiKey || !address) {
+    return { latitude: null, longitude: null, formattedAddress: address };
+  }
+
+  try {
+    const response = await client.geocode({
+      params: {
+        address,
+        key: config.googleMapsApiKey,
+        language: 'es',
+        components: { country: 'CL' }, // Priorizar Chile
+      },
+    });
+
+    if (response.data.results && response.data.results.length > 0) {
+      const result = response.data.results[0];
+      return {
+        latitude: result.geometry.location.lat,
+        longitude: result.geometry.location.lng,
+        formattedAddress: result.formatted_address,
+      };
+    }
+
+    return { latitude: null, longitude: null, formattedAddress: address };
+  } catch (error) {
+    console.error('Error en geocoding directo:', error.message);
+    return { latitude: null, longitude: null, formattedAddress: address };
+  }
+}
+
+/**
  * Convierte coordenadas (lat, lng) a una dirección legible usando Google Maps Geocoding.
  * @param {number} latitude
  * @param {number} longitude
- * @returns {string} Dirección formateada o coordenadas si falla
+ * @returns {Promise<{ formattedAddress: string }>}
  */
 export async function reverseGeocode(latitude, longitude) {
   if (!config.googleMapsApiKey) {
-    return `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    return { formattedAddress: `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}` };
   }
 
   try {
@@ -25,13 +61,13 @@ export async function reverseGeocode(latitude, longitude) {
     });
 
     if (response.data.results && response.data.results.length > 0) {
-      return response.data.results[0].formatted_address;
+      return { formattedAddress: response.data.results[0].formatted_address };
     }
 
-    return `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    return { formattedAddress: `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}` };
   } catch (error) {
-    console.error('Error en geocoding:', error.message);
-    return `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    console.error('Error en reverse geocoding:', error.message);
+    return { formattedAddress: `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}` };
   }
 }
 
